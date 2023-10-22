@@ -1,0 +1,290 @@
+filename webdat url "https://bigblue.depaul.edu/jlee141/econdata/eco520/airbnb2019.csv" ;
+
+/* Import Chicago Community data*/
+PROC IMPORT OUT= airbnb0 DATAFILE= webdat DBMS=CSV REPLACE;
+RUN;
+proc contents ; run ;
+
+/* Create your own random sample data. Make sure type your student ID as seed number Replace your_depaul_id with your student id (only numbers)      */
+
+proc surveyselect data= airbnb0 method=srs seed = 2125288
+     n = 1000 out=airbnb1 ;
+run;
+
+/* The following code will create the class of host */
+data airbnb2 ; set airbnb1 ;
+     if      0 <   host_total_listings  < 3  then hostclass = 1  ; 
+     else if 3 <= host_total_listings   < 20 then hostclass = 2  ; 
+     else if host_total_listings   >=     20 then hostclass = 3  ;
+     /* More variables you would create */
+
+run ;
+
+proc means ; run ; 
+/* Creating dummy Variable */
+data airbnb3; 
+    set airbnb2;
+    
+    /* 1) Most Popular Hosts */
+    if number_of_reviews > 80 then 
+        popular_host = 1;
+    else 
+        popular_host = 0;
+
+    /* 2) Big Family Units */
+    if accommodates > 8 then 
+        big_family_unit = 1;
+    else 
+        big_family_unit = 0;
+
+    /* 3) Long-Term Rent Units */
+    if minimum_nights > 7 then 
+        long_term_rent = 1;
+    else 
+        long_term_rent = 0;
+run;
+
+
+/* Checking the newly created variables */
+proc freq data=airbnb3;
+    tables popular_host big_family_unit long_term_rent;
+run;
+
+
+proc contents data=airbnb3;
+run;
+/* 1. Identify Missing Values and Outliers using PROC UNIVARIATE */
+proc univariate data=airbnb3;
+    var _numeric_;
+    output out=UnivariateStats Q1=Q1 Q3=Q3;
+run;
+
+ 
+PROC SGPLOT DATA=airbnb3	;
+VBOX HPRICE;
+RUN;
+
+
+data airbnb_clean;
+    set airbnb3;
+
+    /* Remove outliers for each variable */
+    if host_total_listings > (10 + 1.5*9) then delete;
+    if accommodates > (6 + 1.5*4) then delete;
+    if bathrooms > (2 + 1.5*1) then delete;
+    if bedrooms > (2 + 1.5*1) then delete;
+    if beds > (3 + 1.5*2) then delete;
+    if guests_included > (4 + 1.5*3) then delete;
+    if minimum_nights > (2 + 1.5*1) then delete;
+    if number_of_reviews > (69 + 1.5*60) then delete;
+    if review_scores_rating < (94 - 1.5*5) then delete;
+    if reviews_per_month > (3.355 + 1.5*2.535) then delete;
+    if PricePerNight > (189.5 + 1.5*118.5) then delete;
+
+    /* Remove missing values */
+    if hostclass = . then delete;
+
+run;
+
+/* Step 1: Create the squared and logarithmic transformations for the desired variables */
+
+data airbnb_clean; 
+    set airbnb3;
+
+    /* Squared Variables */
+    rooms_squared = bedrooms * bedrooms;
+    beds_squared = beds * beds;
+    bathrooms_squared = bathrooms * bathrooms;
+
+    /* Logarithmic Variables */
+    /* Adding 1 to ensure no negative or zero values */
+    log_rooms = log(bedrooms + 1);
+    log_beds = log(beds + 1);
+    log_bathrooms = log(bathrooms + 1);
+run;
+
+/* Step 2: Generate Scatter Plots for Transformed Variables against PricePerNight */
+
+/* Scatter plots for squared variables */
+proc sgplot data=airbnb_clean;
+    scatter x=rooms_squared y=PricePerNight;
+    title "Price vs. Rooms Squared";
+run;
+
+proc sgplot data=airbnb_clean;
+    scatter x=beds_squared y=PricePerNight;
+    title "Price vs. Beds Squared";
+run;
+
+proc sgplot data=airbnb_clean;
+    scatter x=bathrooms_squared y=PricePerNight;
+    title "Price vs. Bathrooms Squared";
+run;
+
+/* Scatter plots for logarithmic variables */
+proc sgplot data=airbnb_clean;
+    scatter x=log_rooms y=PricePerNight;
+    title "Price vs. Log Rooms";
+run;
+
+proc sgplot data=airbnb_clean;
+    scatter x=log_beds y=PricePerNight;
+    title "Price vs. Log Beds";
+run;
+
+proc sgplot data=airbnb_clean;
+    scatter x=log_bathrooms y=PricePerNight;
+    title "Price vs. Log Bathrooms";
+run;
+
+/* Linear Regression Model */
+proc reg data=airbnb_clean;
+    model PricePerNight = accommodates hostclass;
+    run;
+quit;
+
+proc glm data=airbnb_clean;
+    class hostclass;
+    model PricePerNight = hostclass accommodates;
+run;
+
+
+/* Random Selection of Train and Test cases for airbnb_clean data */
+proc surveyselect data=airbnb_clean out=train
+seed=55555 samprate = 0.7 outall; 
+run;
+
+data test;
+    set train (where=(selected=0));
+run;
+
+data train;
+    set train (where=(selected=1));
+    drop selected;
+run;
+/*Model 3: Simple Regression Model with best choice*/
+/* Step : Define the training dataset */
+data train_data; 
+set train; 
+y = PricePerNight; 
+run; 
+
+/* Step 2: Regression using train data */
+proc reg data=train_data;
+model y = hostclass; 
+output out=train_predicted p=yhat_train; 
+run; 
+
+/* Step 3: Use the model to predict on the test data */
+data test_data;
+set test;
+y =  PricePerNight;
+run;
+
+proc reg data=test_data noprint;
+model y = hostclass; 
+output out=predicted_data p=yhat; 
+run;
+
+/* Step 4: Evaluation of the predictions on the test cases */
+data test_eval; 
+set predicted_data; 
+yorg = PricePerNight;
+e1 = yorg - yhat;
+rmse3 = ((e1)**2)**0.5; 
+mse3 = (e1)**2; 
+mae3 = abs(e1); 
+mpe3 = abs((e1)/yorg); 
+run;
+
+proc means n mean data=test_eval; 
+var rmse3 mse3 mae3 mpe3; 
+run;
+
+proc contents data=airbnb_clean; 
+run;
+
+
+/* Model 1: Stepwise Regression */
+
+/* Step 1: Define the training dataset */
+data train_data4; 
+set train; 
+y = PricePerNight; 
+run; 
+
+/* Step 2: Regression using train data with stepwise selection */
+proc reg data=train_data4;
+model y = ListingMonth host_total_listings accommodates bathrooms bedrooms beds guests_included minimum_nights number_of_reviews review_scores_rating reviews_per_month hostclass popular_host big_family_unit long_term_rent bathrooms_squared beds_squared rooms_squared log_bathrooms log_beds log_rooms / selection=stepwise; 
+output out=train_predicted4 p=yhat_train4; 
+run; 
+
+/* Step 3: Use the stepwise model to predict on the test data */
+/* Note: The variables selected in the stepwise model should be used here for prediction */
+data test_data4;
+set test;
+y = PricePerNight;
+run;
+
+proc reg data=test_data4 noprint;
+model y = rooms_squared accommodates hostclass reviews_per_month long_term_rent review_scores_rating bathrooms_squared big_family_unit bedrooms guests_included log_beds log_rooms;
+output out=predicted_data4 p=yhat4; 
+run;
+
+/* Step 4: Evaluation of the predictions on the test cases */
+data test_eval4; 
+set predicted_data4; 
+yorg = PricePerNight; 
+e4 = yorg - yhat4;
+rmse4 = ((e4)**2)**0.5; 
+mse4 = (e4)**2; 
+mae4 = abs(e4); 
+mpe4 = abs((e4)/yorg); 
+run;
+
+proc means n mean data=test_eval4; 
+var rmse4 mse4 mae4 mpe4; 
+run;
+
+/* Model 1: Adjusted R-Square Model */
+
+/* Step 1: Define the training dataset */
+data train_data5; 
+set train; 
+y = PricePerNight;; 
+run; 
+
+/* Step 2: Regression using train data with adjusted R-square selection */
+proc reg data=train_data5;
+model y = ListingMonth host_total_listings accommodates bathrooms bedrooms beds guests_included minimum_nights number_of_reviews review_scores_rating reviews_per_month hostclass popular_host big_family_unit long_term_rent bathrooms_squared beds_squared rooms_squared log_bathrooms log_beds log_rooms  / selection=adjrsq; 
+output out=train_predicted5 p=yhat_train5; 
+run; 
+
+/* Step 3: Use the adjusted R-square model to predict on the test data */
+data test_data5;
+set test;
+y = PricePerNight; 
+run;
+
+
+proc reg data=test_data5 noprint;
+    model y =accommodates bathrooms bedrooms beds guests_included review_scores_rating reviews_per_month hostclass popular_host big_family_unit long_term_rent bathrooms_squared beds_squared rooms_squared log_bathrooms log_beds log_rooms; 
+    output out=predicted_data5 p=yhat5; 
+run;
+
+
+/* Step 4: Evaluation of the predictions on the test cases */
+data test_eval5; 
+set predicted_data5; 
+yorg = PricePerNight;
+e5 = yorg - yhat5;
+rmse5 = ((e5)**2)**0.5; 
+mse5 = (e5)**2; 
+mae5 = abs(e5); 
+mpe5 = abs((e5)/yorg); 
+run;
+
+proc means n mean data=test_eval5; 
+var rmse5 mse5 mae5 mpe5; 
+run;
+
